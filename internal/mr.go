@@ -64,7 +64,7 @@ func measureTdxQemuTdHob(memorySize uint64, meta *tdvfMetadata) []byte {
 	)
 
 	// The rest of the HOBs are EFI_HOB_TYPE_RESOURCE_DESCRIPTOR.
-	remainingMemory := memorySize * 1024 * 1024 // Convert to bytes.
+	remainingMemory := memorySize
 	addMemoryResourceHob := func(resourceType uint8, start, length uint64) {
 		tdHob = append(tdHob,
 			0x03, 0x00, // Header.HobType (EFI_HOB_TYPE_RESOURCE_DESCRIPTOR)
@@ -94,7 +94,7 @@ func measureTdxQemuTdHob(memorySize uint64, meta *tdvfMetadata) []byte {
 	addMemoryResourceHob(0x00, 0x0000000000811000, 0x000000000000f000)
 
 	// Handle memory split at 2816 MiB (0xB0000000).
-	if memorySize >= 2816 {
+	if memorySize >= 0xB0000000 {
 		addMemoryResourceHob(0x07, 0x0000000000820000, 0x000000007F7E0000)
 		addMemoryResourceHob(0x07, 0x0000000100000000, remainingMemory)
 	} else {

@@ -63,11 +63,11 @@ func GenerateTablesQemu(memorySize uint64, cpuCount uint8) ([]byte, []byte, []by
 	rangeMinimumOffset := lengthOffset - 12
 
 	// Handle memory split at 2816 MiB (0xB0000000).
-	if memorySize >= 2816 {
+	if memorySize >= 0xB0000000 {
 		binary.LittleEndian.PutUint32(tpl[rangeMinimumOffset:], 0x80000000)
 		binary.LittleEndian.PutUint32(tpl[lengthOffset:], 0x60000000)
 	} else {
-		memSizeBytes := uint32(memorySize * 1024 * 1024)
+		memSizeBytes := uint32(memorySize)
 		binary.LittleEndian.PutUint32(tpl[rangeMinimumOffset:], memSizeBytes)
 		binary.LittleEndian.PutUint32(tpl[lengthOffset:], 0xe0000000-memSizeBytes)
 	}

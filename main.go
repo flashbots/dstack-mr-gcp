@@ -28,16 +28,28 @@ type measurementOutput struct {
 	MrImage      string `json:"mr_image"`
 }
 
+const (
+	GB = 1024 * 1024 * 1024 // in bytes
+	MB = 1024 * 1024
+)
+
 var knownKeyProviders = map[string]string{
 	"sgx-v0": "0x4888adb026ff91c1320c4f544a9f5d9e0561e13fc64947a10aa1556d0071b2cc",
 	"none":   "0x3369c4d32b9f1320ebba5ce9892a283127b7e96e1d511d7f292e5d9ed2c10b8c",
 }
 
-// parseMemorySize parses a human readable memory size (e.g., "1G", "512M") into megabytes
+// parseMemorySize parses a human readable memory size (e.g., "1G", "512M") into bytes
 func parseMemorySize(size string) (uint64, error) {
 	size = strings.TrimSpace(strings.ToUpper(size))
 	if len(size) == 0 {
 		return 0, fmt.Errorf("empty memory size")
+	}
+
+	// Check if the input is purely numeric (no unit)
+	if _, err := strconv.ParseUint(size, 10, 64); err == nil {
+		// If it's a valid number with no unit, interpret as MB
+		num, _ := strconv.ParseUint(size, 10, 64)
+		return num, nil
 	}
 
 	// Get the unit (last character)
@@ -51,12 +63,12 @@ func parseMemorySize(size string) (uint64, error) {
 		return 0, fmt.Errorf("invalid memory size number: %v", err)
 	}
 
-	// Convert to megabytes based on unit
+	// Convert to bytes based on unit
 	switch unit {
 	case "G":
-		return num * 1024, nil // Convert GB to MB
+		return num * GB, nil // Convert GB to bytes
 	case "M":
-		return num, nil // Already in MB
+		return num * MB, nil // Convert MB to bytes
 	default:
 		return 0, fmt.Errorf("invalid memory unit '%s', must be one of: G, M", unit)
 	}
@@ -65,23 +77,22 @@ func parseMemorySize(size string) (uint64, error) {
 type memoryValue uint64
 
 func (m *memoryValue) String() string {
-	mb := uint64(*m)
-	const (
-		GB = 1024 // in MB
-	)
-
-	if mb >= GB && mb%GB == 0 {
-		return fmt.Sprintf("%dG", mb/GB)
+	m_bytes := uint64(*m)
+	if m_bytes >= GB && m_bytes%GB == 0 {
+		return fmt.Sprintf("%dG", m_bytes/GB)
 	}
-	return fmt.Sprintf("%dM", mb)
+	if m_bytes >= MB && m_bytes%MB == 0 {
+		return fmt.Sprintf("%dM", m_bytes/MB)
+	}
+	return fmt.Sprintf("%d", m_bytes)
 }
 
 func (m *memoryValue) Set(value string) error {
-	mb, err := parseMemorySize(value)
+	m_bytes, err := parseMemorySize(value)
 	if err != nil {
 		return err
 	}
-	*m = memoryValue(mb)
+	*m = memoryValue(m_bytes)
 	return nil
 }
 
@@ -91,7 +102,7 @@ func main() {
 		fwPath        string
 		kernelPath    string
 		initrdPath    string
-		memorySize    memoryValue = 2048 // 2G default (in MB)
+		memorySize    memoryValue
 		cpuCountUint  uint
 		kernelCmdline string
 		jsonOutput    bool
