@@ -134,121 +134,6 @@ func measureTdxQemuAcpiTables(memorySize uint64, cpuCount uint8) ([]byte, []byte
 	return measureSha384(tables), measureSha384(rsdp), measureSha384(loader), nil
 }
 
-// measureTdxQemuKernelImage measures QEMU-patched TDX kernel image.
-func measureTdxQemuKernelImage(kernelData []byte, initRdSize uint32, memSize uint64, acpiDataSize uint32) ([]byte, error) {
-	return MeasureTdxQemuKernelImageData(kernelData, initRdSize, memSize, acpiDataSize)
-}
-
-func MeasureTdxQemuKernelImageData(kernelData []byte, initRdSize uint32, memSize uint64, acpiDataSize uint32) ([]byte, error) {
-	memSizeBytes := memSize * 1024 * 1024 // Convert to bytes.
-	// Check if kernel data is long enough for all required fields
-	const minKernelLength = 0x1000
-	if len(kernelData) < minKernelLength {
-		return nil, fmt.Errorf("kernel data too short: need at least %d bytes, got %d", minKernelLength, len(kernelData))
-	}
-
-	// Create a mutable copy of the kernel data
-	kd := make([]byte, len(kernelData))
-	copy(kd, kernelData)
-
-	// Get protocol version from kernel header
-	protocol := uint16(kd[0x206]) + (uint16(kd[0x207]) << 8)
-
-	// Determine addresses based on protocol version
-	var realAddr, cmdlineAddr uint32
-	if protocol < 0x200 || (kd[0x211]&0x01) == 0 {
-		// Low kernel
-		realAddr = 0x90000
-		cmdlineAddr = 0x9a000
-	} else if protocol < 0x202 {
-		// High but ancient kernel
-		realAddr = 0x90000
-		cmdlineAddr = 0x9a000
-	} else {
-		// High and recent kernel
-		realAddr = 0x10000
-		cmdlineAddr = 0x20000
-	}
-
-	if protocol >= 0x200 {
-		kd[0x210] = 0xb0 // type_of_loader = Qemu v0
-	}
-	if protocol >= 0x201 {
-		kd[0x211] |= 0x80 // loadflags |= CAN_USE_HEAP
-		// heap_end_ptr
-		binary.LittleEndian.PutUint32(kd[0x224:0x224+4], cmdlineAddr-realAddr-0x200)
-	}
-
-	if protocol >= 0x202 {
-		// cmd_line_ptr
-		binary.LittleEndian.PutUint32(kd[0x228:0x228+4], cmdlineAddr)
-	} else {
-		// For older protocols
-		binary.LittleEndian.PutUint16(kd[0x20:0x20+2], 0xA33F)
-		binary.LittleEndian.PutUint16(kd[0x22:0x22+2], uint16(cmdlineAddr-realAddr))
-	}
-
-	// Handle initrd if size is non-zero
-	if initRdSize > 0 {
-		// Check protocol version - must be >= 0x200 to support initrd
-		if protocol < 0x200 {
-			return nil, fmt.Errorf("linux kernel too old to load a ram disk (protocol version 0x%x)", protocol)
-		}
-
-		// Determine initrd_max based on protocol version
-		var initrdMax uint32
-		if protocol >= 0x20c {
-			xlf := binary.LittleEndian.Uint16(kd[0x236 : 0x236+2])
-			if (xlf & 0x40) != 0 {
-				// XLF_CAN_BE_LOADED_ABOVE_4G (0x40) is set
-				initrdMax = ^uint32(0) // UINT32_MAX
-			} else {
-				initrdMax = 0x37ffffff
-			}
-		} else if protocol >= 0x203 {
-			initrdMax = binary.LittleEndian.Uint32(kd[0x22c : 0x22c+4])
-			if initrdMax == 0 {
-				initrdMax = 0x37ffffff
-			}
-		} else {
-			initrdMax = 0x37ffffff
-		}
-
-		// Calculate below_4g_mem_size
-		var below4gMemSize uint32
-		lowmem := uint32(0x80000000)
-		if memSizeBytes < 0xb0000000 {
-			lowmem = 0xb0000000
-		}
-		if memSizeBytes >= uint64(lowmem) {
-			below4gMemSize = lowmem
-		} else {
-			below4gMemSize = uint32(memSizeBytes)
-		}
-
-		// Adjust initrd_max based on memory size and ACPI data size
-		if initrdMax >= below4gMemSize-acpiDataSize {
-			initrdMax = below4gMemSize - acpiDataSize - 1
-		}
-
-		if initRdSize >= initrdMax {
-			return nil, fmt.Errorf("initrd is too large (max: %d, need: %d)", initrdMax, initRdSize)
-		}
-
-		initrdAddr := (initrdMax - initRdSize) & ^uint32(4095)
-
-		// Store initrd address and size in kernel header
-		binary.LittleEndian.PutUint32(kd[0x218:0x218+4], initrdAddr)
-		binary.LittleEndian.PutUint32(kd[0x21c:0x21c+4], initRdSize)
-	}
-
-	parsed, err := authenticode.Parse(bytes.NewReader(kd))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse PE file: %w", err)
-	}
-	return parsed.Hash(crypto.SHA384), nil
-}
-
 // encodeGUID encodes an UEFI GUID into binary form.
 func encodeGUID(guid string) []byte {
 	var data []byte
@@ -531,20 +416,20 @@ func (m *TdxMeasurements) CalculateMrImage() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memorySize uint64, cpuCount uint8, kernelCmdline string) (*TdxMeasurements, error) {
+func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memorySize uint64, cpuCount uint8, kernelCmdline string, debug bool) (*TdxMeasurements, error) {
 	// Parse TDVF metadata.
-	tdvfMeta, err := parseTdvfMetadata(fwData)
+	/*tdvfMeta, err := parseTdvfMetadata(fwData)
 	if err != nil {
 		return nil, err
-	}
+	} TODO*/
 
 	measurements := &TdxMeasurements{}
 
 	// Calculate MRTD
-	measurements.MRTD = tdvfMeta.computeMrtd(fwData, mrtdVariantTwoPass)
+	// measurements.MRTD = tdvfMeta.computeMrtd(fwData, mrtdVariantTwoPass) TODO
 
 	// RTMR0 calculation (existing code)
-	tdHobHash := measureTdxQemuTdHob(memorySize, tdvfMeta)
+	// tdHobHash := measureTdxQemuTdHob(memorySize, tdvfMeta) TODO
 	cfvImageHash, _ := hex.DecodeString("344BC51C980BA621AAA00DA3ED7436F7D6E549197DFE699515DFA2C6583D95E6412AF21C097D473155875FFD561D6790")
 	boot000Hash, _ := hex.DecodeString("23ADA07F5261F12F34A0BD8E46760962D6B4D576A416F1FEA1C64BC656B1D28EACF7047AE6E967C58FD2A98BFA74C298")
 	acpiTablesHash, acpiRsdpHash, acpiLoaderHash, err := measureTdxQemuAcpiTables(memorySize, cpuCount)
@@ -553,7 +438,7 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 	}
 
 	rtmr0Log := append([][]byte{},
-		tdHobHash,
+		// tdHobHash, TODO
 		cfvImageHash,
 		measureTdxEfiVariable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "SecureBoot"),
 		measureTdxEfiVariable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "PK"),
@@ -571,25 +456,44 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 
 	// RTMR1 calculation
 	var err2 error
-	kernelAuthHash, err2 := measureTdxQemuKernelImage(kernelData, uint32(len(initrdData)), memorySize, 0x28000)
+	kernelAuth, err2 := authenticode.Parse(bytes.NewReader(kernelData))
+	kernelAuthHash := kernelAuth.Hash(crypto.SHA384)
+	venMediaHash, _ := hex.DecodeString("EBFFE1DECB1752C23908F3A59C2C20E94C4923EE04B2E9CF559538092BD0B0796BCB592E7252C5D71EAAA0EEBC6AFA66")
+	uefiDiskGuidHash := calculateUEFIDiskGUIDHash()
+
 	if err2 != nil {
 		return nil, err2
 	}
 	rtmr1Log := append([][]byte{},
-		kernelAuthHash,
 		measureSha384([]byte("Calling EFI Application from Boot Option")),
 		measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
+		uefiDiskGuidHash,
+		kernelAuthHash,
+		venMediaHash,
 		measureSha384([]byte("Exit Boot Services Invocation")),
 		measureSha384([]byte("Exit Boot Services Returned with Success")),
 	)
 	measurements.RTMR1 = measureLog(rtmr1Log)
+
+	if debug {
+		for i, entry := range rtmr1Log {
+			fmt.Printf("RTMR1[%d]: %x\n", i, entry)
+		}
+	}
 
 	// RTMR2 calculation
 	rtmr2Log := append([][]byte{},
 		measureTdxKernelCmdline(kernelCmdline),
 		measureSha384(initrdData),
 	)
+
 	measurements.RTMR2 = measureLog(rtmr2Log)
+
+	if debug {
+		for i, entry := range rtmr2Log {
+			fmt.Printf("RTMR2[%d]: %x\n", i, entry)
+		}
+	}
 
 	return measurements, nil
 }

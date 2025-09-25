@@ -1,11 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"debug/pe"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -96,28 +97,63 @@ func (m *memoryValue) Set(value string) error {
 	return nil
 }
 
+func extractUKISections(ukiData []byte) (string, []byte, error) {
+	// Create a reader from the UKI data
+	reader := bytes.NewReader(ukiData)
+
+	// Parse as PE file
+	peFile, err := pe.NewFile(reader)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to parse UKI as PE file: %w", err)
+	}
+
+	// Extract cmdline section
+	cmdlineSection := peFile.Section(".cmdline")
+	if cmdlineSection == nil {
+		return "", nil, fmt.Errorf("no .cmdline section found in UKI")
+	}
+
+	cmdlineData, err := cmdlineSection.Data()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read .cmdline section: %w", err)
+	}
+
+	// Convert cmdline to string, removing any trailing null bytes
+	kernelCmdline := strings.TrimRight(string(cmdlineData), "\x00")
+
+	var initrdData []byte
+	initrdSection := peFile.Section(".initrd")
+	if initrdSection != nil {
+		initrdData, err = initrdSection.Data()
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to read .initrd section: %w", err)
+		}
+
+		// Trim initrdData to the actual initrd size
+		initrdData = initrdData[:initrdSection.VirtualSize]
+	}
+
+	return kernelCmdline, initrdData, nil
+}
+
 func main() {
 	const defaultMrKeyProvider = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	var (
 		fwPath        string
-		kernelPath    string
-		initrdPath    string
+		ukiPath       string
 		memorySize    memoryValue
 		cpuCountUint  uint
-		kernelCmdline string
 		jsonOutput    bool
-		metadataPath  string
+		debug         bool
 		mrKeyProvider string = defaultMrKeyProvider
 	)
 
 	flag.StringVar(&fwPath, "fw", "", "Path to firmware file")
-	flag.StringVar(&kernelPath, "kernel", "", "Path to kernel file")
-	flag.StringVar(&initrdPath, "initrd", "", "Path to initrd file")
+	flag.StringVar(&ukiPath, "uki", "", "Path to UKI (Unified Kernel Image) file")
 	flag.Var(&memorySize, "memory", "Memory size (e.g., 512M, 1G, 2G)")
 	flag.UintVar(&cpuCountUint, "cpu", 1, "Number of CPUs")
-	flag.StringVar(&kernelCmdline, "cmdline", "", "Kernel command line")
 	flag.BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	flag.StringVar(&metadataPath, "metadata", "", "Path to DStack metadata.json file")
+	flag.BoolVar(&debug, "debug", false, "Enable debug output")
 	flag.StringVar(&mrKeyProvider, "mrkp", defaultMrKeyProvider, "Measurement of key provider")
 	flag.Parse()
 
@@ -126,69 +162,29 @@ func main() {
 		mrKeyProvider = knownKeyProvider
 	}
 
-	// If metadata file is provided, read it and override other options
-	if metadataPath != "" {
-		metadataDir := filepath.Dir(metadataPath)
-		data, err := os.ReadFile(metadataPath)
-		if err != nil {
-			fmt.Printf("Error reading metadata file: %v\n", err)
-			os.Exit(1)
-		}
-
-		var metadata DStackMetadata
-		if err := json.Unmarshal(data, &metadata); err != nil {
-			fmt.Printf("Error parsing metadata file: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Override paths with metadata values
-		if fwPath == "" {
-			fwPath = filepath.Join(metadataDir, metadata.Bios)
-		}
-		if kernelPath == "" {
-			kernelPath = filepath.Join(metadataDir, metadata.Kernel)
-		}
-		if initrdPath == "" && metadata.Initrd != "" {
-			initrdPath = filepath.Join(metadataDir, metadata.Initrd)
-		}
-		if kernelCmdline == "" {
-			kernelCmdline = metadata.Cmdline
-			if metadata.Initrd != "" {
-				kernelCmdline += " initrd=initrd"
-			}
-		}
-	}
-
-	if fwPath == "" || kernelPath == "" {
-		fmt.Println("Error: firmware and kernel paths are required (either directly or via metadata.json)")
-		flag.Usage()
+	ukiData, err := os.ReadFile(ukiPath)
+	if err != nil {
+		fmt.Printf("Error reading UKI file: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Read files
-	fwData, err := os.ReadFile(fwPath)
+	// Extract cmdline and initrd from UKI
+	kernelCmdline, initrdData, err := extractUKISections(ukiData)
+	if err != nil {
+		fmt.Printf("Error extracting sections from UKI: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Read firmware file
+	/*fwData, err := os.ReadFile(fwPath)
 	if err != nil {
 		fmt.Printf("Error reading firmware file: %v\n", err)
 		os.Exit(1)
-	}
-
-	kernelData, err := os.ReadFile(kernelPath)
-	if err != nil {
-		fmt.Printf("Error reading kernel file: %v\n", err)
-		os.Exit(1)
-	}
-
-	var initrdData []byte
-	if initrdPath != "" {
-		initrdData, err = os.ReadFile(initrdPath)
-		if err != nil {
-			fmt.Printf("Error reading initrd file: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	}*/
+	fwData := []byte{} // TODO
 
 	// Calculate measurements
-	measurements, err := internal.MeasureTdxQemu(fwData, kernelData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline)
+	measurements, err := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, debug)
 	if err != nil {
 		fmt.Printf("Error calculating measurements: %v\n", err)
 		os.Exit(1)
@@ -210,11 +206,11 @@ func main() {
 		}
 		fmt.Println(string(jsonData))
 	} else {
-		fmt.Printf("MRTD: %x\n", measurements.MRTD)
-		fmt.Printf("RTMR0: %x\n", measurements.RTMR0)
+		// fmt.Printf("MRTD: %x\n", measurements.MRTD)
+		// fmt.Printf("RTMR0: %x\n", measurements.RTMR0)
 		fmt.Printf("RTMR1: %x\n", measurements.RTMR1)
 		fmt.Printf("RTMR2: %x\n", measurements.RTMR2)
-		fmt.Printf("MR_AGGREGATED: %s\n", measurements.CalculateMrAggregated(mrKeyProvider))
-		fmt.Printf("MR_IMAGE: %s\n", measurements.CalculateMrImage())
+		// fmt.Printf("MR_AGGREGATED: %s\n", measurements.CalculateMrAggregated(mrKeyProvider))
+		// fmt.Printf("MR_IMAGE: %s\n", measurements.CalculateMrImage())
 	}
 }
