@@ -21,12 +21,12 @@ type DStackMetadata struct {
 }
 
 type measurementOutput struct {
-	MRTD         string `json:"mrtd"`
-	RTMR0        string `json:"rtmr0"`
+	// MRTD         string `json:"mrtd"`
+	// RTMR0        string `json:"rtmr0"`
 	RTMR1        string `json:"rtmr1"`
 	RTMR2        string `json:"rtmr2"`
-	MrAggregated string `json:"mr_aggregated"`
-	MrImage      string `json:"mr_image"`
+	// MrAggregated string `json:"mr_aggregated"`
+	// MrImage      string `json:"mr_image"`
 }
 
 const (
@@ -192,12 +192,12 @@ func main() {
 
 	if jsonOutput {
 		output := measurementOutput{
-			MRTD:         fmt.Sprintf("%x", measurements.MRTD),
-			RTMR0:        fmt.Sprintf("%x", measurements.RTMR0),
+			// MRTD:         fmt.Sprintf("%x", measurements.MRTD),
+			// RTMR0:        fmt.Sprintf("%x", measurements.RTMR0),
 			RTMR1:        fmt.Sprintf("%x", measurements.RTMR1),
 			RTMR2:        fmt.Sprintf("%x", measurements.RTMR2),
-			MrAggregated: measurements.CalculateMrAggregated(mrKeyProvider),
-			MrImage:      measurements.CalculateMrImage(),
+			// MrAggregated: measurements.CalculateMrAggregated(mrKeyProvider),
+			// MrImage:      measurements.CalculateMrImage(),
 		}
 		jsonData, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
