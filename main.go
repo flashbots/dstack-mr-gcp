@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"debug/pe"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,29 +11,34 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/crypto/sha3"
+
 	"github.com/kvinwang/dstack-mr/internal"
 )
-
-type DStackMetadata struct {
-	Bios    string `json:"bios"`
-	Kernel  string `json:"kernel"`
-	Cmdline string `json:"cmdline"`
-	Initrd  string `json:"initrd"`
-}
-
-type measurementOutput struct {
-	// MRTD         string `json:"mrtd"`
-	// RTMR0        string `json:"rtmr0"`
-	RTMR1        string `json:"rtmr1"`
-	RTMR2        string `json:"rtmr2"`
-	// MrAggregated string `json:"mr_aggregated"`
-	// MrImage      string `json:"mr_image"`
-}
 
 const (
 	GB = 1024 * 1024 * 1024 // in bytes
 	MB = 1024 * 1024
 )
+
+// Add to this when google changes their OVMF fork
+var fixedMeasurements = map[string]map[string]string{
+	// Extracted on 2025-10-14
+	"a5844e88897b70c318bef929ef4dfd6c7304c52c4bc9c3f39132f0fdccecf3eb5bab70110ee42a12509a31c037288694": {
+		"c3-standard-4": "d0f45aa9ba05adfd1a0742b8d885c4dc00050a2fd0eda64469c9e5d191008494ddd9a01c647517c5cdb0632816fbc435",
+		"c3-standard-8": "b5b994287455c2bbae601cd2f8d67ccbf64b9971a7473926f711d78e84ac1f4ec23b0661309a72826f15c325eb0c8991",
+	},
+}
+
+type measurementOutput struct {
+	RTMR1       string   `json:"rtmr1"`
+	RTMR2       string   `json:"rtmr2"`
+	WorkloadIDs []string `json:"workloadIds"`
+	RTMR0s      []string `json:"rtmr0s"`
+	MRTDs       []string `json:"mrtds"`
+}
+
+var workloadFooter = make([]byte, 112) // RTMR3(48) + MRCONFIGID(48) + TdAttributes(8) + xFAM(8)
 
 var knownKeyProviders = map[string]string{
 	"sgx-v0": "0x4888adb026ff91c1320c4f544a9f5d9e0561e13fc64947a10aa1556d0071b2cc",
@@ -136,6 +142,15 @@ func extractUKISections(ukiData []byte) (string, []byte, error) {
 	return kernelCmdline, initrdData, nil
 }
 
+func generateWorkloadID(mrtd, rtmr0, rtmr1, rtmr2 []byte) []byte {
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write(mrtd)
+	hash.Write(rtmr0)
+	hash.Write(rtmr1)
+	hash.Write(rtmr2)
+	return hash.Sum(workloadFooter)
+}
+
 func main() {
 	const defaultMrKeyProvider = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	var (
@@ -143,7 +158,6 @@ func main() {
 		ukiPath       string
 		memorySize    memoryValue
 		cpuCountUint  uint
-		jsonOutput    bool
 		debug         bool
 		mrKeyProvider string = defaultMrKeyProvider
 	)
@@ -152,7 +166,6 @@ func main() {
 	flag.StringVar(&ukiPath, "uki", "", "Path to UKI (Unified Kernel Image) file")
 	flag.Var(&memorySize, "memory", "Memory size (e.g., 512M, 1G, 2G)")
 	flag.UintVar(&cpuCountUint, "cpu", 1, "Number of CPUs")
-	flag.BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
 	flag.StringVar(&mrKeyProvider, "mrkp", defaultMrKeyProvider, "Measurement of key provider")
 	flag.Parse()
@@ -190,27 +203,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	if jsonOutput {
-		output := measurementOutput{
-			// MRTD:         fmt.Sprintf("%x", measurements.MRTD),
-			// RTMR0:        fmt.Sprintf("%x", measurements.RTMR0),
-			RTMR1:        fmt.Sprintf("%x", measurements.RTMR1),
-			RTMR2:        fmt.Sprintf("%x", measurements.RTMR2),
-			// MrAggregated: measurements.CalculateMrAggregated(mrKeyProvider),
-			// MrImage:      measurements.CalculateMrImage(),
+	var workloadIds []string
+	var rtmr0s []string
+	var mrtdsArr []string
+	for mrtdStr, rtmr0Map := range fixedMeasurements {
+		mrtd, _ := hex.DecodeString(mrtdStr)
+		for _, rtmr0Str := range rtmr0Map {
+			rtmr0, _ := hex.DecodeString(rtmr0Str)
+			workloadId := generateWorkloadID(mrtd, rtmr0, measurements.RTMR1, measurements.RTMR2)
+			workloadIds = append(workloadIds, fmt.Sprintf("%x", workloadId))
+			rtmr0s = append(rtmr0s, rtmr0Str)
+			mrtdsArr = append(mrtdsArr, mrtdStr)
 		}
-		jsonData, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			fmt.Printf("Error encoding JSON: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(string(jsonData))
-	} else {
-		// fmt.Printf("MRTD: %x\n", measurements.MRTD)
-		// fmt.Printf("RTMR0: %x\n", measurements.RTMR0)
-		fmt.Printf("RTMR1: %x\n", measurements.RTMR1)
-		fmt.Printf("RTMR2: %x\n", measurements.RTMR2)
-		// fmt.Printf("MR_AGGREGATED: %s\n", measurements.CalculateMrAggregated(mrKeyProvider))
-		// fmt.Printf("MR_IMAGE: %s\n", measurements.CalculateMrImage())
 	}
+
+	output := measurementOutput{
+		RTMR1:       fmt.Sprintf("%x", measurements.RTMR1),
+		RTMR2:       fmt.Sprintf("%x", measurements.RTMR2),
+		WorkloadIDs: workloadIds,
+		RTMR0s:      rtmr0s,
+		MRTDs:       mrtdsArr,
+	}
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		fmt.Printf("Error encoding JSON: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(jsonData))
 }
