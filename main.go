@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -13,30 +15,16 @@ import (
 	"github.com/kvinwang/dstack-mr/internal"
 )
 
-type DStackMetadata struct {
-	Bios    string `json:"bios"`
-	Kernel  string `json:"kernel"`
-	Cmdline string `json:"cmdline"`
-	Initrd  string `json:"initrd"`
-}
-
-type measurementOutput struct {
-	// MRTD         string `json:"mrtd"`
-	// RTMR0        string `json:"rtmr0"`
-	RTMR1        string `json:"rtmr1"`
-	RTMR2        string `json:"rtmr2"`
-	// MrAggregated string `json:"mr_aggregated"`
-	// MrImage      string `json:"mr_image"`
-}
-
 const (
 	GB = 1024 * 1024 * 1024 // in bytes
 	MB = 1024 * 1024
 )
 
-var knownKeyProviders = map[string]string{
-	"sgx-v0": "0x4888adb026ff91c1320c4f544a9f5d9e0561e13fc64947a10aa1556d0071b2cc",
-	"none":   "0x3369c4d32b9f1320ebba5ce9892a283127b7e96e1d511d7f292e5d9ed2c10b8c",
+type measurementOutput struct {
+	RTMR1 string   `json:"rtmr1"`
+	RTMR2 string   `json:"rtmr2"`
+	RTMR0 []string `json:"rtmr0"`
+	MRTD  []string `json:"mrtd"`
 }
 
 // parseMemorySize parses a human readable memory size (e.g., "1G", "512M") into bytes
@@ -137,30 +125,22 @@ func extractUKISections(ukiData []byte) (string, []byte, error) {
 }
 
 func main() {
-	const defaultMrKeyProvider = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	var (
-		fwPath        string
+		// fwPath        string
 		ukiPath       string
 		memorySize    memoryValue
 		cpuCountUint  uint
-		jsonOutput    bool
 		debug         bool
-		mrKeyProvider string = defaultMrKeyProvider
+		configuration string
 	)
 
-	flag.StringVar(&fwPath, "fw", "", "Path to firmware file")
+	// flag.StringVar(&fwPath, "fw", "", "Path to firmware file")
 	flag.StringVar(&ukiPath, "uki", "", "Path to UKI (Unified Kernel Image) file")
 	flag.Var(&memorySize, "memory", "Memory size (e.g., 512M, 1G, 2G)")
 	flag.UintVar(&cpuCountUint, "cpu", 1, "Number of CPUs")
-	flag.BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
-	flag.StringVar(&mrKeyProvider, "mrkp", defaultMrKeyProvider, "Measurement of key provider")
+	flag.StringVar(&configuration, "config", "", "Machine configuration (e.g., c3-standard-4). If omitted, generates measurements for all configurations")
 	flag.Parse()
-
-	// If the mrKeyProvider is in the knownKeyProviders, replace it with the value
-	if knownKeyProvider, ok := knownKeyProviders[mrKeyProvider]; ok {
-		mrKeyProvider = knownKeyProvider
-	}
 
 	ukiData, err := os.ReadFile(ukiPath)
 	if err != nil {
@@ -181,36 +161,59 @@ func main() {
 		fmt.Printf("Error reading firmware file: %v\n", err)
 		os.Exit(1)
 	}*/
-	fwData := []byte{} // TODO
 
-	// Calculate measurements
-	measurements, err := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, debug)
+	// Download firmware data from GCS bucket
+	fwURL := fmt.Sprintf("https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/%s.fd", internal.LatestFirmwareFile)
+	resp, err := http.Get(fwURL)
 	if err != nil {
-		fmt.Printf("Error calculating measurements: %v\n", err)
+		fmt.Printf("Error downloading firmware file: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	fwData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error reading firmware data: %v\n", err)
 		os.Exit(1)
 	}
 
-	if jsonOutput {
-		output := measurementOutput{
-			// MRTD:         fmt.Sprintf("%x", measurements.MRTD),
-			// RTMR0:        fmt.Sprintf("%x", measurements.RTMR0),
-			RTMR1:        fmt.Sprintf("%x", measurements.RTMR1),
-			RTMR2:        fmt.Sprintf("%x", measurements.RTMR2),
-			// MrAggregated: measurements.CalculateMrAggregated(mrKeyProvider),
-			// MrImage:      measurements.CalculateMrImage(),
-		}
-		jsonData, err := json.MarshalIndent(output, "", "  ")
+	// Determine which configurations to process
+	var configurations []string
+	if configuration != "" {
+		configurations = []string{configuration}
+	} else {
+		configurations = internal.GetAllConfigurations()
+	}
+
+	var rtmr0s []string
+	// Todo: compute
+	var mrtds []string = []string{internal.LatestMRTD}
+
+	// Todo: loop across MRTDS
+	for _, config := range configurations {
+		// Calculate measurements for this configuration
+		measurements, err := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, config, debug)
 		if err != nil {
-			fmt.Printf("Error encoding JSON: %v\n", err)
+			fmt.Printf("Error calculating measurements for %s: %v\n", config, err)
 			os.Exit(1)
 		}
-		fmt.Println(string(jsonData))
-	} else {
-		// fmt.Printf("MRTD: %x\n", measurements.MRTD)
-		// fmt.Printf("RTMR0: %x\n", measurements.RTMR0)
-		fmt.Printf("RTMR1: %x\n", measurements.RTMR1)
-		fmt.Printf("RTMR2: %x\n", measurements.RTMR2)
-		// fmt.Printf("MR_AGGREGATED: %s\n", measurements.CalculateMrAggregated(mrKeyProvider))
-		// fmt.Printf("MR_IMAGE: %s\n", measurements.CalculateMrImage())
+
+		rtmr0s = append(rtmr0s, fmt.Sprintf("%x", measurements.RTMR0))
 	}
+
+	// Use the last measurements for RTMR1/RTMR2
+	measurements, _ := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, configurations[0], debug)
+
+	output := measurementOutput{
+		RTMR1: fmt.Sprintf("%x", measurements.RTMR1),
+		RTMR2: fmt.Sprintf("%x", measurements.RTMR2),
+		RTMR0: rtmr0s,
+		MRTD:  mrtds,
+	}
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		fmt.Printf("Error encoding JSON: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(jsonData))
 }
