@@ -3,15 +3,14 @@ package main
 import (
 	"bytes"
 	"debug/pe"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
-
-	"golang.org/x/crypto/sha3"
 
 	"github.com/kvinwang/dstack-mr/internal"
 )
@@ -21,28 +20,11 @@ const (
 	MB = 1024 * 1024
 )
 
-// Add to this when google changes their OVMF fork
-var fixedMeasurements = map[string]map[string]string{
-	// Extracted on 2025-10-14
-	"a5844e88897b70c318bef929ef4dfd6c7304c52c4bc9c3f39132f0fdccecf3eb5bab70110ee42a12509a31c037288694": {
-		"c3-standard-4": "d0f45aa9ba05adfd1a0742b8d885c4dc00050a2fd0eda64469c9e5d191008494ddd9a01c647517c5cdb0632816fbc435",
-		"c3-standard-8": "b5b994287455c2bbae601cd2f8d67ccbf64b9971a7473926f711d78e84ac1f4ec23b0661309a72826f15c325eb0c8991",
-	},
-}
-
 type measurementOutput struct {
-	RTMR1       string   `json:"rtmr1"`
-	RTMR2       string   `json:"rtmr2"`
-	WorkloadIDs []string `json:"workloadIds"`
-	RTMR0s      []string `json:"rtmr0s"`
-	MRTDs       []string `json:"mrtds"`
-}
-
-var workloadFooter = make([]byte, 112) // RTMR3(48) + MRCONFIGID(48) + TdAttributes(8) + xFAM(8)
-
-var knownKeyProviders = map[string]string{
-	"sgx-v0": "0x4888adb026ff91c1320c4f544a9f5d9e0561e13fc64947a10aa1556d0071b2cc",
-	"none":   "0x3369c4d32b9f1320ebba5ce9892a283127b7e96e1d511d7f292e5d9ed2c10b8c",
+	RTMR1 string   `json:"rtmr1"`
+	RTMR2 string   `json:"rtmr2"`
+	RTMR0 []string `json:"rtmr0"`
+	MRTD  []string `json:"mrtd"`
 }
 
 // parseMemorySize parses a human readable memory size (e.g., "1G", "512M") into bytes
@@ -142,38 +124,23 @@ func extractUKISections(ukiData []byte) (string, []byte, error) {
 	return kernelCmdline, initrdData, nil
 }
 
-func generateWorkloadID(mrtd, rtmr0, rtmr1, rtmr2 []byte) []byte {
-	hash := sha3.NewLegacyKeccak256()
-	hash.Write(mrtd)
-	hash.Write(rtmr0)
-	hash.Write(rtmr1)
-	hash.Write(rtmr2)
-	return hash.Sum(workloadFooter)
-}
-
 func main() {
-	const defaultMrKeyProvider = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	var (
-		fwPath        string
+		// fwPath        string
 		ukiPath       string
 		memorySize    memoryValue
 		cpuCountUint  uint
 		debug         bool
-		mrKeyProvider string = defaultMrKeyProvider
+		configuration string
 	)
 
-	flag.StringVar(&fwPath, "fw", "", "Path to firmware file")
+	// flag.StringVar(&fwPath, "fw", "", "Path to firmware file")
 	flag.StringVar(&ukiPath, "uki", "", "Path to UKI (Unified Kernel Image) file")
 	flag.Var(&memorySize, "memory", "Memory size (e.g., 512M, 1G, 2G)")
 	flag.UintVar(&cpuCountUint, "cpu", 1, "Number of CPUs")
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
-	flag.StringVar(&mrKeyProvider, "mrkp", defaultMrKeyProvider, "Measurement of key provider")
+	flag.StringVar(&configuration, "config", "", "Machine configuration (e.g., c3-standard-4). If omitted, generates measurements for all configurations")
 	flag.Parse()
-
-	// If the mrKeyProvider is in the knownKeyProviders, replace it with the value
-	if knownKeyProvider, ok := knownKeyProviders[mrKeyProvider]; ok {
-		mrKeyProvider = knownKeyProvider
-	}
 
 	ukiData, err := os.ReadFile(ukiPath)
 	if err != nil {
@@ -194,35 +161,54 @@ func main() {
 		fmt.Printf("Error reading firmware file: %v\n", err)
 		os.Exit(1)
 	}*/
-	fwData := []byte{} // TODO
 
-	// Calculate measurements
-	measurements, err := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, debug)
+	// Download firmware data from GCS bucket
+	fwURL := fmt.Sprintf("https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/%s.fd", internal.LatestFirmwareFile)
+	resp, err := http.Get(fwURL)
 	if err != nil {
-		fmt.Printf("Error calculating measurements: %v\n", err)
+		fmt.Printf("Error downloading firmware file: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	fwData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error reading firmware data: %v\n", err)
 		os.Exit(1)
 	}
 
-	var workloadIds []string
-	var rtmr0s []string
-	var mrtdsArr []string
-	for mrtdStr, rtmr0Map := range fixedMeasurements {
-		mrtd, _ := hex.DecodeString(mrtdStr)
-		for _, rtmr0Str := range rtmr0Map {
-			rtmr0, _ := hex.DecodeString(rtmr0Str)
-			workloadId := generateWorkloadID(mrtd, rtmr0, measurements.RTMR1, measurements.RTMR2)
-			workloadIds = append(workloadIds, fmt.Sprintf("%x", workloadId))
-			rtmr0s = append(rtmr0s, rtmr0Str)
-			mrtdsArr = append(mrtdsArr, mrtdStr)
-		}
+	// Determine which configurations to process
+	var configurations []string
+	if configuration != "" {
+		configurations = []string{configuration}
+	} else {
+		configurations = internal.GetAllConfigurations()
 	}
 
+	var rtmr0s []string
+	// Todo: compute
+	var mrtds []string = []string{internal.LatestMRTD}
+
+	// Todo: loop across MRTDS
+	for _, config := range configurations {
+		// Calculate measurements for this configuration
+		measurements, err := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, config, debug)
+		if err != nil {
+			fmt.Printf("Error calculating measurements for %s: %v\n", config, err)
+			os.Exit(1)
+		}
+
+		rtmr0s = append(rtmr0s, fmt.Sprintf("%x", measurements.RTMR0))
+	}
+
+	// Use the last measurements for RTMR1/RTMR2
+	measurements, _ := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, configurations[0], debug)
+
 	output := measurementOutput{
-		RTMR1:       fmt.Sprintf("%x", measurements.RTMR1),
-		RTMR2:       fmt.Sprintf("%x", measurements.RTMR2),
-		WorkloadIDs: workloadIds,
-		RTMR0s:      rtmr0s,
-		MRTDs:       mrtdsArr,
+		RTMR1: fmt.Sprintf("%x", measurements.RTMR1),
+		RTMR2: fmt.Sprintf("%x", measurements.RTMR2),
+		RTMR0: rtmr0s,
+		MRTD:  mrtds,
 	}
 	jsonData, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
