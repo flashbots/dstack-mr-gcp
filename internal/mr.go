@@ -111,9 +111,15 @@ func measureTdxQemuTdHob(memorySize uint64 /*, meta *tdvfMetadata*/) []byte {
 }
 
 // measureLog computes a measurement of the given RTMR event log by simulating extending the RTMR.
-func measureLog(log [][]byte) []byte {
+func measureLog(log [][]byte, debug bool, rtmrName string) []byte {
+	if debug && rtmrName != "" {
+		fmt.Printf("\n=== %s Event Hashes ===\n", rtmrName)
+	}
 	var mr [48]byte // Initialize to zero.
-	for _, entry := range log {
+	for i, entry := range log {
+		if debug && rtmrName != "" {
+			fmt.Printf("%s[%d]: %x\n", rtmrName, i, entry)
+		}
 		h := sha512.New384()
 		_, _ = h.Write(mr[:])
 		_, _ = h.Write(entry)
@@ -229,11 +235,11 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		configEvents.AcpiLoaderHash,
 		configEvents.AcpiRsdpHash,
 		configEvents.AcpiTablesHash,
-		measureSha384([]byte{0x01, 0x00, 0x00}), // BootOrder
+		measureSha384([]byte{0x01, 0x00, 0x00, 0x00}), // BootOrder: 0001,0000
 		boot0001Hash,
 		boot0000Hash,
 	)
-	measurements.RTMR0 = measureLog(rtmr0Log)
+	measurements.RTMR0 = measureLog(rtmr0Log, debug, "RTMR0")
 
 	// RTMR1 calculation
 	kernelAuth, err2 := authenticode.Parse(bytes.NewReader(kernelData))
@@ -252,13 +258,7 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		measureSha384([]byte("Exit Boot Services Invocation")),
 		measureSha384([]byte("Exit Boot Services Returned with Success")),
 	)
-	measurements.RTMR1 = measureLog(rtmr1Log)
-
-	if debug {
-		for i, entry := range rtmr1Log {
-			fmt.Printf("RTMR1[%d]: %x\n", i, entry)
-		}
-	}
+	measurements.RTMR1 = measureLog(rtmr1Log, debug, "RTMR1")
 
 	// RTMR2 calculation
 	rtmr2Log := append([][]byte{},
@@ -266,13 +266,7 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		measureSha384(initrdData),
 	)
 
-	measurements.RTMR2 = measureLog(rtmr2Log)
-
-	if debug {
-		for i, entry := range rtmr2Log {
-			fmt.Printf("RTMR2[%d]: %x\n", i, entry)
-		}
-	}
+	measurements.RTMR2 = measureLog(rtmr2Log, debug, "RTMR2")
 
 	return measurements, nil
 }
