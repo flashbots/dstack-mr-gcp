@@ -21,10 +21,14 @@ const (
 )
 
 type measurementOutput struct {
-	RTMR1 string   `json:"rtmr1"`
-	RTMR2 string   `json:"rtmr2"`
-	RTMR0 []string `json:"rtmr0"`
-	MRTD  []string `json:"mrtd"`
+	RTMR1        string   `json:"rtmr1"`
+	RTMR2        string   `json:"rtmr2"`
+	RTMR3        string   `json:"rtmr3"`
+	RTMR0        []string `json:"rtmr0"`
+	MRTD         []string `json:"mrtd"`
+	MRConfigID   string   `json:"mrconfigid"`
+	XFAM         string   `json:"xfam"`
+	TDAttributes string   `json:"tdattributes"`
 }
 
 // parseMemorySize parses a human readable memory size (e.g., "1G", "512M") into bytes
@@ -205,10 +209,14 @@ func main() {
 	measurements, _ := internal.MeasureTdxQemu(fwData, ukiData, initrdData, uint64(memorySize), uint8(cpuCountUint), kernelCmdline, configurations[0], debug)
 
 	output := measurementOutput{
-		RTMR1: fmt.Sprintf("%x", measurements.RTMR1),
-		RTMR2: fmt.Sprintf("%x", measurements.RTMR2),
-		RTMR0: rtmr0s,
-		MRTD:  mrtds,
+		RTMR1:        fmt.Sprintf("%x", measurements.RTMR1),
+		RTMR2:        fmt.Sprintf("%x", measurements.RTMR2),
+		RTMR0:        rtmr0s,
+		MRTD:         mrtds,
+		XFAM:         internal.XFAM,
+		TDAttributes: internal.TDAttributes,
+		MRConfigID:   internal.Empty,
+		RTMR3:        internal.Empty,
 	}
 	jsonData, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {

@@ -13,6 +13,13 @@ func mustDecodeHex(s string) []byte {
 	return b
 }
 
+// Constant measurements
+const (
+	XFAM         = "e700060000000000"
+	TDAttributes = "0000001000000000"
+	Empty        = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+)
+
 // Firmware file name from gs://gce_tcb_integrity/ovmf_x64_csm
 const LatestFirmwareFile = "ff11d313b462e2c7b08143f54785f77f71f55f71673d934c8e209c086294548c8c61eff4b3a9dd0708e3e5d79e163f39"
 
