@@ -235,8 +235,9 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		configEvents.AcpiLoaderHash,
 		configEvents.AcpiRsdpHash,
 		configEvents.AcpiTablesHash,
-		measureSha384([]byte{0x01, 0x00, 0x00, 0x00}), // BootOrder: 0001,0000
+		measureSha384([]byte{0x01, 0x00, 0x02, 0x00, 0x00, 0x00}), // BootOrder: 0001,0002,0000
 		boot0001Hash,
+		boot0002Hash,
 		boot0000Hash,
 	)
 	measurements.RTMR0 = measureLog(rtmr0Log, debug, "RTMR0")
