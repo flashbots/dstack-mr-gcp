@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/sha256"
 	"crypto/sha512"
+	"debug/pe"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -151,6 +152,20 @@ func encodeGUID(guid string) []byte {
 	return data
 }
 
+// extractKernelPE extracts the .linux section from a UKI
+func extractKernel(ukiData []byte) []byte {
+	f, err := pe.NewFile(bytes.NewReader(ukiData))
+	if err != nil {
+		panic("failed to parse UKI as PE file")
+	}
+	defer f.Close()
+	data, err := f.Section(".linux").Data()
+	if err != nil {
+		panic("failed to extract .linux section from UKI")
+	}
+	return data
+}
+
 // measureTdxEfiVariable measures an EFI variable event.
 func measureTdxEfiVariable(vendorGUID string, varName string) []byte {
 	var data []byte
@@ -223,7 +238,7 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		return nil, fmt.Errorf("failed to compute CFV hash: %w", err)
 	}
 
-	rtmr0Log := append([][]byte{},
+	rtmr0Log := [][]byte{
 		configEvents.TdHobHash,
 		cfvImageHash,
 		secureBootHash,
@@ -239,33 +254,37 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		boot0001Hash,
 		boot0002Hash,
 		boot0000Hash,
-	)
+	}
 	measurements.RTMR0 = measureLog(rtmr0Log, debug, "RTMR0")
 
 	// RTMR1 calculation
-	kernelAuth, err2 := authenticode.Parse(bytes.NewReader(kernelData))
-	if err2 != nil {
-		return nil, err2
+	ukiAuthHash, err := authenticode.Parse(bytes.NewReader(kernelData))
+	if err != nil {
+		return nil, err
 	}
-	kernelAuthHash := kernelAuth.Hash(crypto.SHA384)
-	uefiDiskGuidHash := calculateUEFIDiskGUIDHash()
 
-	rtmr1Log := append([][]byte{},
+	kernelPEData := extractKernel(kernelData)
+	kernelAuthHash, err := authenticode.Parse(bytes.NewReader(kernelPEData))
+	if err != nil {
+		return nil, err
+	}
+
+	rtmr1Log := [][]byte{
 		measureSha384([]byte("Calling EFI Application from Boot Option")),
 		measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
-		uefiDiskGuidHash,
-		kernelAuthHash,
-		venMediaHash,
+		calculateUEFIDiskGUIDHash(),
+		ukiAuthHash.Hash(crypto.SHA384),
+		kernelAuthHash.Hash(crypto.SHA384),
 		measureSha384([]byte("Exit Boot Services Invocation")),
 		measureSha384([]byte("Exit Boot Services Returned with Success")),
-	)
+	}
 	measurements.RTMR1 = measureLog(rtmr1Log, debug, "RTMR1")
 
 	// RTMR2 calculation
-	rtmr2Log := append([][]byte{},
+	rtmr2Log := [][]byte{
 		measureTdxKernelCmdline(kernelCmdline),
 		measureSha384(initrdData),
-	)
+	}
 
 	measurements.RTMR2 = measureLog(rtmr2Log, debug, "RTMR2")
 
