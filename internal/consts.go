@@ -42,10 +42,6 @@ var (
 	dbxHash        = mustDecodeHex("C61BAE1A3F7B7E6CC3B9B03F630B77292EBD232AE60E0E1916F980955EC38459529574B49F1898C367EAF6D8A62311F5")
 )
 
-// Hardcoded SHA384 hashes of other UEFI components
-var (
-	venMediaHash = mustDecodeHex("F324FEF02FC7EA8F6E7BE848F48615CF40C1F46F37D5343D1B94A6BAACC833681EBD49237CAE94B9043FF18FA0B45C53")
-)
 
 // configurationEvents maps machine configuration to hardcoded TD HOB and ACPI table hashes
 type configurationEvents struct {
