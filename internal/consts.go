@@ -26,12 +26,26 @@ const LatestFirmwareFile = "ff11d313b462e2c7b08143f54785f77f71f55f71673d934c8e20
 // Corresponding filename from gs://gce_tcb_integrity/ovmf_x64_csm/tdx
 const LatestMRTD = "a5844e88897b70c318bef929ef4dfd6c7304c52c4bc9c3f39132f0fdccecf3eb5bab70110ee42a12509a31c037288694"
 
-// Hardcoded SHA384 hashes of UEFI binaries
-var (
-	boot0001Hash = mustDecodeHex("A25333C7AEC2E0993034938C7F11893B3C2BCAF67E88C342A3D586F6F7FAE2C6A1247A9ED86988080A6D4BE497D4FBB6")
-	boot0002Hash = mustDecodeHex("9068065754FF3AE3DD58A5897535EEAF62A19A6757D82DD91349C41BAE2E3F208E268ABBA2A4378BC5C8D1ACF2FD260F")
-	boot0000Hash = mustDecodeHex("23ADA07F5261F12F34A0BD8E46760962D6B4D576A416F1FEA1C64BC656B1D28EACF7047AE6E967C58FD2A98BFA74C298")
-)
+// Region contains NVME driver measurements that vary by GCP region
+type Region struct {
+	Boot0001 []byte
+	Boot0002 []byte
+}
+
+// Regions maps region names to their NVME driver measurements
+var Regions = map[string]Region{
+	"us": {
+		Boot0001: mustDecodeHex("A25333C7AEC2E0993034938C7F11893B3C2BCAF67E88C342A3D586F6F7FAE2C6A1247A9ED86988080A6D4BE497D4FBB6"),
+		Boot0002: mustDecodeHex("9068065754FF3AE3DD58A5897535EEAF62A19A6757D82DD91349C41BAE2E3F208E268ABBA2A4378BC5C8D1ACF2FD260F"),
+	},
+	"europe": {
+		Boot0001: mustDecodeHex("AD073F06C3E96A1FD95AD8FF602B913155384775C6D258B6290F3D995CD3882F243E2D1A38182EB102857CA417CEA960"),
+		Boot0002: mustDecodeHex("E501398B9DCEFA43727503A8B1161225FB9413C39CE91126D2A9A3588AE7ECDFA7A9FCBFFC6A1CBC3E0EC92CBD4810E7"),
+	},
+}
+
+// boot0000Hash is the same across all regions
+var boot0000Hash = mustDecodeHex("23ADA07F5261F12F34A0BD8E46760962D6B4D576A416F1FEA1C64BC656B1D28EACF7047AE6E967C58FD2A98BFA74C298")
 
 // Hardcoded SHA384 hashes of TDX EFI variables
 var (
@@ -66,11 +80,3 @@ var machineConfigurations = map[string]configurationEvents{
 	},
 }
 
-// GetAllConfigurations returns a list of all available machine configurations
-func GetAllConfigurations() []string {
-	configs := make([]string, 0, len(machineConfigurations))
-	for config := range machineConfigurations {
-		configs = append(configs, config)
-	}
-	return configs
-}
