@@ -1,5 +1,5 @@
-.PHONY: build install clean test fmt vet lint help
-.PHONY: release release-snapshot
+.PHONY: build install clean test fmt vet tidy run check help
+.PHONY: release release-snapshot release-dry-run
 .DEFAULT_GOAL := help
 
 # Variables
@@ -46,16 +46,18 @@ vet:
 	@echo "Running go vet..."
 	go vet ./...
 
-## lint: Run golangci-lint (requires golangci-lint to be installed)
-lint:
-	@echo "Running golangci-lint..."
-	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Install from https://golangci-lint.run/usage/install/" && exit 1)
-	golangci-lint run ./...
-
 ## tidy: Tidy go modules
 tidy:
 	@echo "Tidying go modules..."
 	go mod tidy
+
+## run: Build and run the binary
+run: build
+	$(BUILD_DIR)/$(BINARY_NAME)
+
+## check: Run fmt, vet, and test
+check: fmt vet test
+	@echo "All checks passed!"
 
 ## release: Create a release with GoReleaser (requires GITHUB_TOKEN)
 release:
@@ -75,11 +77,3 @@ release-dry-run:
 	@echo "Dry run of release process..."
 	@which goreleaser > /dev/null || (echo "goreleaser not found. Install from https://goreleaser.com/install/" && exit 1)
 	goreleaser release --skip=publish --clean
-
-## run: Build and run the binary
-run: build
-	$(BUILD_DIR)/$(BINARY_NAME)
-
-## check: Run fmt, vet, and test
-check: fmt vet test
-	@echo "All checks passed!"
