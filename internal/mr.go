@@ -3,7 +3,6 @@ package internal
 import (
 	"bytes"
 	"crypto"
-	"crypto/sha256"
 	"crypto/sha512"
 	"debug/pe"
 	"encoding/binary"
@@ -188,45 +187,27 @@ func measureTdxEfiVariable(vendorGUID string, varName string) []byte {
 
 // TdxMeasurements contains all the measurement values for TDX
 type TdxMeasurements struct {
-	MRTD  []byte
-	RTMR0 []byte
-	RTMR1 []byte
-	RTMR2 []byte
+	MRTD   []byte
+	RTMR0s [][]byte
+	RTMR1  []byte
+	RTMR2  []byte
 }
 
-// CalculateMrAggregated calculates mr_aggregated = sha256(mrtd+rtmr0+rtmr1+rtmr2+mr_key_provider)
-func (m *TdxMeasurements) CalculateMrAggregated(mrKeyProvider string) string {
-	// Strip "0x" prefix if present
-	mrKeyProvider = strings.TrimPrefix(mrKeyProvider, "0x")
-	mrKeyProviderBytes, err := hex.DecodeString(mrKeyProvider)
-	if err != nil {
-		panic("invalid mr_key_provider")
-	}
-	h := sha256.New()
-	h.Write(m.MRTD)
-	h.Write(m.RTMR0)
-	h.Write(m.RTMR1)
-	h.Write(m.RTMR2)
-	h.Write(mrKeyProviderBytes)
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// CalculateMrImage calculates mr_image = sha256(mrtd+rtmr1+rtmr2)
-func (m *TdxMeasurements) CalculateMrImage() string {
-	h := sha256.New()
-	h.Write(m.MRTD)
-	h.Write(m.RTMR1)
-	h.Write(m.RTMR2)
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memorySize uint64, cpuCount uint8, kernelCmdline string, configuration string, debug bool) (*TdxMeasurements, error) {
+func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, kernelCmdline string, configurations []string, regions []string, debug bool) (*TdxMeasurements, error) {
 	measurements := &TdxMeasurements{}
 
-	// Get configuration-specific events
-	configEvents, ok := machineConfigurations[configuration]
-	if !ok {
-		return nil, fmt.Errorf("unknown machine configuration: %s", configuration)
+	// Default to all configurations if nil
+	if configurations == nil {
+		for name := range machineConfigurations {
+			configurations = append(configurations, name)
+		}
+	}
+
+	// Default to all regions if nil
+	if regions == nil {
+		for name := range Regions {
+			regions = append(regions, name)
+		}
 	}
 
 	// Calculate MRTD
@@ -238,24 +219,38 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		return nil, fmt.Errorf("failed to compute CFV hash: %w", err)
 	}
 
-	rtmr0Log := [][]byte{
-		configEvents.TdHobHash,
-		cfvImageHash,
-		secureBootHash,
-		pkHash,
-		kekHash,
-		dbHash,
-		dbxHash,
-		measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
-		configEvents.AcpiLoaderHash,
-		configEvents.AcpiRsdpHash,
-		configEvents.AcpiTablesHash,
-		measureSha384([]byte{0x01, 0x00, 0x02, 0x00, 0x00, 0x00}), // BootOrder: 0001,0002,0000
-		boot0001Hash,
-		boot0002Hash,
-		boot0000Hash,
+	for _, configName := range configurations {
+		configEvents, ok := machineConfigurations[configName]
+		if !ok {
+			return nil, fmt.Errorf("unknown machine configuration: %s", configName)
+		}
+
+		for _, regionName := range regions {
+			region, ok := Regions[regionName]
+			if !ok {
+				return nil, fmt.Errorf("unknown region: %s", regionName)
+			}
+
+			rtmr0Log := [][]byte{
+				configEvents.TdHobHash,
+				cfvImageHash,
+				secureBootHash,
+				pkHash,
+				kekHash,
+				dbHash,
+				dbxHash,
+				measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
+				configEvents.AcpiLoaderHash,
+				configEvents.AcpiRsdpHash,
+				configEvents.AcpiTablesHash,
+				measureSha384([]byte{0x01, 0x00, 0x02, 0x00, 0x00, 0x00}), // BootOrder: 0001,0002,0000
+				region.Boot0001,
+				region.Boot0002,
+				boot0000Hash,
+			}
+			measurements.RTMR0s = append(measurements.RTMR0s, measureLog(rtmr0Log, debug, "RTMR0"))
+		}
 	}
-	measurements.RTMR0 = measureLog(rtmr0Log, debug, "RTMR0")
 
 	// RTMR1 calculation
 	ukiAuthHash, err := authenticode.Parse(bytes.NewReader(kernelData))
@@ -285,7 +280,6 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, memoryS
 		measureTdxKernelCmdline(kernelCmdline),
 		measureSha384(initrdData),
 	}
-
 	measurements.RTMR2 = measureLog(rtmr2Log, debug, "RTMR2")
 
 	return measurements, nil
