@@ -1,0 +1,80 @@
+version: 2
+
+project_name: dstack-mr-gcp
+
+env:
+  - CGO_ENABLED=0
+
+builds:
+  - id: dstack-mr-gcp-linux-amd64
+    main: .
+    binary: dstack-mr-gcp
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -mod=readonly
+      - -trimpath
+    ldflags:
+      - -X main.Version={{ .Version }}
+      - -X main.Commit={{ .Commit }}
+      - -w -s
+
+  - id: dstack-mr-gcp-linux-arm64
+    main: .
+    binary: dstack-mr-gcp
+    goos:
+      - linux
+    goarch:
+      - arm64
+    flags:
+      - -mod=readonly
+      - -trimpath
+    ldflags:
+      - -X main.Version={{ .Version }}
+      - -X main.Commit={{ .Commit }}
+      - -w -s
+
+archives:
+  - name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: "sha256sum.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: flashbots
+    name: dstack-mr-gcp
+  replace_existing_draft: true
+  header: |
+    ## dstack-mr-gcp {{ .Version }}
+
+    <RELEASE NOTES>
+
+    ### Binaries
+
+    Binaries for Linux (amd64 and arm64) are available below.
+
+    ### Build from source
+
+    ```bash
+    git clone https://github.com/flashbots/dstack-mr-gcp
+    cd dstack-mr-gcp && git checkout {{ .Tag }}
+    make build
+    ```
+
+  name_template: "v{{ .Version }}"
+  mode: replace
+  draft: true
