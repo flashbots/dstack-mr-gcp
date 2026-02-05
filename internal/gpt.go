@@ -11,7 +11,7 @@ import (
 const (
 	diskSizeBytes   = 1024 * 1024 * 1024 // 1GB
 	diskSizeSectors = diskSizeBytes / 512
-	partitionName   = "ESP"
+	partitionName   = "esp"
 )
 
 // LBA (Logical Block Address) constants
@@ -53,7 +53,7 @@ func calculateUEFIDiskGUIDHash() []byte {
 		Reserved:                 0,
 		MyLBA:                    gptHeaderLBA,
 		AlternateLBA:             diskSizeSectors - 1,
-		FirstUsableLBA:           34,
+		FirstUsableLBA:           2048,
 		LastUsableLBA:            diskSizeSectors - 34,
 		PartitionEntryLBA:        partitionEntryLBA,
 		NumberOfPartitionEntries: 128,
@@ -72,7 +72,7 @@ func calculateUEFIDiskGUIDHash() []byte {
 	}{
 		StartingLBA: espStartingLBA,
 		EndingLBA:   espEndingLBA,
-		Attributes:  0x0000000000000001, // Bit 0 = Platform required
+		Attributes:  0,
 	}
 	copy(partition.PartitionTypeGUID[:], encodeGUID("C12A7328-F81F-11D2-BA4B-00A0C93EC93B")) // EFI System Partition
 	copy(partition.UniquePartitionGUID[:], encodeGUID(espPartitionGUID))
