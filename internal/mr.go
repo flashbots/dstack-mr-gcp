@@ -185,40 +185,25 @@ func measureTdxEfiVariable(vendorGUID string, varName string) []byte {
 	return measureSha384(data)
 }
 
-// TdxMeasurements contains all the measurement values for TDX
-type TdxMeasurements struct {
-	MRTD   []byte
-	RTMR0s [][]byte
-	RTMR1  []byte
-	RTMR2  []byte
-}
-
-func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, kernelCmdline string, configurations []string, regions []string, debug bool) (*TdxMeasurements, error) {
-	measurements := &TdxMeasurements{}
-
-	// Default to all configurations if nil
+// MeasureRTMR0 computes RTMR0 values for a given firmware across all configuration/region combinations.
+func MeasureRTMR0(fwData []byte, configurations []string, regions []string, debug bool) ([][]byte, error) {
 	if configurations == nil {
 		for name := range machineConfigurations {
 			configurations = append(configurations, name)
 		}
 	}
-
-	// Default to all regions if nil
 	if regions == nil {
 		for name := range Regions {
 			regions = append(regions, name)
 		}
 	}
 
-	// Calculate MRTD
-	// measurements.MRTD = tdvfMeta.computeMrtd(fwData, mrtdVariantTwoPass) TODO
-
-	// RTMR0 calculations
 	cfvImageHash, err := GetExpectedCfvSha384(fwData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute CFV hash: %w", err)
 	}
 
+	var rtmr0s [][]byte
 	for _, configName := range configurations {
 		configEvents, ok := machineConfigurations[configName]
 		if !ok {
@@ -248,20 +233,24 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, kernelC
 				region.Boot0002,
 				boot0000Hash,
 			}
-			measurements.RTMR0s = append(measurements.RTMR0s, measureLog(rtmr0Log, debug, "RTMR0"))
+			rtmr0s = append(rtmr0s, measureLog(rtmr0Log, debug, "RTMR0"))
 		}
 	}
 
-	// RTMR1 calculation
+	return rtmr0s, nil
+}
+
+// MeasureRTMR1And2 computes RTMR1 and RTMR2 from the UKI, initrd, and kernel cmdline (firmware-independent).
+func MeasureRTMR1And2(kernelData []byte, initrdData []byte, kernelCmdline string, debug bool) (rtmr1 []byte, rtmr2 []byte, err error) {
 	ukiAuthHash, err := authenticode.Parse(bytes.NewReader(kernelData))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	kernelPEData := extractKernel(kernelData)
 	kernelAuthHash, err := authenticode.Parse(bytes.NewReader(kernelPEData))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	rtmr1Log := [][]byte{
@@ -273,14 +262,13 @@ func MeasureTdxQemu(fwData []byte, kernelData []byte, initrdData []byte, kernelC
 		measureSha384([]byte("Exit Boot Services Invocation")),
 		measureSha384([]byte("Exit Boot Services Returned with Success")),
 	}
-	measurements.RTMR1 = measureLog(rtmr1Log, debug, "RTMR1")
+	rtmr1 = measureLog(rtmr1Log, debug, "RTMR1")
 
-	// RTMR2 calculation
 	rtmr2Log := [][]byte{
 		measureTdxKernelCmdline(kernelCmdline),
 		measureSha384(initrdData),
 	}
-	measurements.RTMR2 = measureLog(rtmr2Log, debug, "RTMR2")
+	rtmr2 = measureLog(rtmr2Log, debug, "RTMR2")
 
-	return measurements, nil
+	return rtmr1, rtmr2, nil
 }

@@ -20,11 +20,24 @@ const (
 	Empty        = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 
-// Firmware file name from gs://gce_tcb_integrity/ovmf_x64_csm
-const LatestFirmwareFile = "ff11d313b462e2c7b08143f54785f77f71f55f71673d934c8e209c086294548c8c61eff4b3a9dd0708e3e5d79e163f39"
+// FirmwareMRTD pairs a firmware file name (from gs://gce_tcb_integrity/ovmf_x64_csm)
+// with its corresponding MRTD (from gs://gce_tcb_integrity/ovmf_x64_csm/tdx)
+type FirmwareMRTD struct {
+	FirmwareFile string
+	MRTD         string
+}
 
-// Corresponding filename from gs://gce_tcb_integrity/ovmf_x64_csm/tdx
-const LatestMRTD = "a5844e88897b70c318bef929ef4dfd6c7304c52c4bc9c3f39132f0fdccecf3eb5bab70110ee42a12509a31c037288694"
+// FirmwareMRTDs contains all supported firmware/MRTD pairs
+var FirmwareMRTDs = []FirmwareMRTD{
+	{
+		FirmwareFile: "ff11d313b462e2c7b08143f54785f77f71f55f71673d934c8e209c086294548c8c61eff4b3a9dd0708e3e5d79e163f39",
+		MRTD:         "a5844e88897b70c318bef929ef4dfd6c7304c52c4bc9c3f39132f0fdccecf3eb5bab70110ee42a12509a31c037288694",
+	},
+	{
+		FirmwareFile: "afa88de3952c1b3f696fb5c526493742ff25131848bd769305c69166103a53790d010ffb34149b5f428df6eaa39a2749",
+		MRTD:         "8370d8f6d02f2d13e211e91c93fde923049522b241425a29a7bf0071ef49b250af4ef49d852fa3e10065d1b51dfce8fb",
+	},
+}
 
 // Region contains NVME driver measurements that vary by GCP region
 type Region struct {
