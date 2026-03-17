@@ -103,45 +103,44 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Read firmware file
-	/*fwData, err := os.ReadFile(fwPath)
-	if err != nil {
-		fmt.Printf("Error reading firmware file: %v\n", err)
-		os.Exit(1)
-	}*/
+	// Download and measure each firmware variant
+	var rtmr0s []string
+	var mrtds []string
+	for _, fw := range internal.FirmwareMRTDs {
+		fwURL := fmt.Sprintf("https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/%s.fd", fw.FirmwareFile)
+		resp, err := http.Get(fwURL)
+		if err != nil {
+			fmt.Printf("Error downloading firmware file %s: %v\n", fw.FirmwareFile[:16], err)
+			os.Exit(1)
+		}
+		fwData, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error reading firmware data: %v\n", err)
+			os.Exit(1)
+		}
 
-	// Download firmware data from GCS bucket
-	fwURL := fmt.Sprintf("https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/%s.fd", internal.LatestFirmwareFile)
-	resp, err := http.Get(fwURL)
-	if err != nil {
-		fmt.Printf("Error downloading firmware file: %v\n", err)
-		os.Exit(1)
+		rtmr0Hashes, err := internal.MeasureRTMR0(fwData, configurations, regions, debug)
+		if err != nil {
+			fmt.Printf("Error calculating RTMR0: %v\n", err)
+			os.Exit(1)
+		}
+		for _, h := range rtmr0Hashes {
+			rtmr0s = append(rtmr0s, fmt.Sprintf("%x", h))
+		}
+		mrtds = append(mrtds, fw.MRTD)
 	}
-	defer resp.Body.Close()
 
-	fwData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading firmware data: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Calculate measurements for all configurations and regions
-	measurements, err := internal.MeasureTdxQemu(fwData, ukiData, initrdData, kernelCmdline, configurations, regions, debug)
+	// Calculate firmware-independent measurements (RTMR1, RTMR2)
+	rtmr1, rtmr2, err := internal.MeasureRTMR1And2(ukiData, initrdData, kernelCmdline, debug)
 	if err != nil {
 		fmt.Printf("Error calculating measurements: %v\n", err)
 		os.Exit(1)
 	}
 
-	var rtmr0s []string
-	for _, rtmr0 := range measurements.RTMR0s {
-		rtmr0s = append(rtmr0s, fmt.Sprintf("%x", rtmr0))
-	}
-
-	var mrtds = []string{internal.LatestMRTD}
-
 	output := measurementOutput{
-		RTMR1:        fmt.Sprintf("%x", measurements.RTMR1),
-		RTMR2:        fmt.Sprintf("%x", measurements.RTMR2),
+		RTMR1:        fmt.Sprintf("%x", rtmr1),
+		RTMR2:        fmt.Sprintf("%x", rtmr2),
 		RTMR0:        rtmr0s,
 		MRTD:         mrtds,
 		XFAM:         internal.XFAM,
