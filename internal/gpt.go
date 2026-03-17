@@ -5,13 +5,13 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"hash/crc32"
+	"math"
 )
 
-// Disk size constants
 const (
-	diskSizeBytes   = 1024 * 1024 * 1024 // 1GB
-	diskSizeSectors = diskSizeBytes / 512
-	partitionName   = "esp"
+	mib           = 1024 * 1024
+	gib           = 1024 * mib
+	partitionName = "esp"
 )
 
 // LBA (Logical Block Address) constants
@@ -19,7 +19,6 @@ const (
 	gptHeaderLBA      = 1
 	partitionEntryLBA = 2
 	espStartingLBA    = 2048
-	espEndingLBA      = 1026047
 )
 
 // GUID constants for disk and partition
@@ -28,8 +27,15 @@ const (
 	espPartitionGUID = "87654321-4321-8765-4321-876543218765"
 )
 
-// Generates the deterministic UEFI disk GUID hash for TDX measurements
-func calculateUEFIDiskGUIDHash() []byte {
+// Generates the deterministic UEFI disk GUID hash for TDX measurements.
+// Sizes are derived from the EFI file size in the same way as mkosi.postoutput
+func calculateUEFIDiskGUIDHash(efiSize int) []byte {
+	// Compute partition geometry to match systemd-repart + sgdisk behavior
+	espBytes := int(math.Ceil(float64(efiSize+32*mib)/4096)) * 4096 // repart rounds SizeMaxBytes up to 4096
+	diskBytes := int(math.Ceil(float64(espBytes+mib)/float64(gib))) * gib
+	diskSizeSectors := uint64(diskBytes / 512)
+	espEndingLBA := uint64(espStartingLBA + espBytes/512 - 1)
+
 	// GPT Header at LBA 1
 	header := struct {
 		Signature                [8]byte
