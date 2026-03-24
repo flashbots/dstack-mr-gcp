@@ -70,24 +70,17 @@ func main() {
 		ukiPath string
 		debug   bool
 		config  string
-		region  string
 	)
 
 	// flag.StringVar(&fwPath, "fw", "", "Path to firmware file")
 	flag.StringVar(&ukiPath, "uki", "", "Path to UKI (Unified Kernel Image) file")
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
-	flag.StringVar(&config, "config", "", "Machine configurations (comma-separated, e.g., c3-standard-4,c3-standard-8)")
-	flag.StringVar(&region, "region", "", "Regions (comma-separated, e.g., us,europe)")
+	flag.StringVar(&config, "config", "", "Machine configurations (comma-separated, e.g., c3-standard-4,c3-standard-22)")
 	flag.Parse()
 
 	var configurations []string
 	if config != "" {
 		configurations = strings.Split(config, ",")
-	}
-
-	var regions []string
-	if region != "" {
-		regions = strings.Split(region, ",")
 	}
 
 	ukiData, err := os.ReadFile(ukiPath)
@@ -120,7 +113,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		rtmr0Hashes, err := internal.MeasureRTMR0(fwData, configurations, regions, debug)
+		rtmr0Hashes, err := internal.MeasureRTMR0(fwData, configurations, debug)
 		if err != nil {
 			fmt.Printf("Error calculating RTMR0: %v\n", err)
 			os.Exit(1)

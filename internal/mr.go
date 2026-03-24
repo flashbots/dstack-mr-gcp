@@ -185,16 +185,11 @@ func measureTdxEfiVariable(vendorGUID string, varName string) []byte {
 	return measureSha384(data)
 }
 
-// MeasureRTMR0 computes RTMR0 values for a given firmware across all configuration/region combinations.
-func MeasureRTMR0(fwData []byte, configurations []string, regions []string, debug bool) ([][]byte, error) {
+// MeasureRTMR0 computes RTMR0 values for a given firmware across all configuration/boot variant/ACPI variant combinations.
+func MeasureRTMR0(fwData []byte, configurations []string, debug bool) ([][]byte, error) {
 	if configurations == nil {
 		for name := range machineConfigurations {
 			configurations = append(configurations, name)
-		}
-	}
-	if regions == nil {
-		for name := range Regions {
-			regions = append(regions, name)
 		}
 	}
 
@@ -210,30 +205,27 @@ func MeasureRTMR0(fwData []byte, configurations []string, regions []string, debu
 			return nil, fmt.Errorf("unknown machine configuration: %s", configName)
 		}
 
-		for _, regionName := range regions {
-			region, ok := Regions[regionName]
-			if !ok {
-				return nil, fmt.Errorf("unknown region: %s", regionName)
+		for _, acpi := range configEvents.AcpiHashes {
+			for _, boot := range bootVariants {
+				rtmr0Log := [][]byte{
+					configEvents.TdHobHash,
+					cfvImageHash,
+					secureBootHash,
+					pkHash,
+					kekHash,
+					dbHash,
+					dbxHash,
+					measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
+					acpi.AcpiLoaderHash,
+					acpi.AcpiRsdpHash,
+					acpi.AcpiTablesHash,
+					measureSha384([]byte{0x01, 0x00, 0x02, 0x00, 0x00, 0x00}), // BootOrder: 0001,0002,0000
+					boot.Boot0001,
+					boot.Boot0002,
+					boot0000Hash,
+				}
+				rtmr0s = append(rtmr0s, measureLog(rtmr0Log, debug, "RTMR0"))
 			}
-
-			rtmr0Log := [][]byte{
-				configEvents.TdHobHash,
-				cfvImageHash,
-				secureBootHash,
-				pkHash,
-				kekHash,
-				dbHash,
-				dbxHash,
-				measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
-				configEvents.AcpiLoaderHash,
-				configEvents.AcpiRsdpHash,
-				configEvents.AcpiTablesHash,
-				measureSha384([]byte{0x01, 0x00, 0x02, 0x00, 0x00, 0x00}), // BootOrder: 0001,0002,0000
-				region.Boot0001,
-				region.Boot0002,
-				boot0000Hash,
-			}
-			rtmr0s = append(rtmr0s, measureLog(rtmr0Log, debug, "RTMR0"))
 		}
 	}
 
