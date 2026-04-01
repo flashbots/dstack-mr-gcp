@@ -158,11 +158,12 @@ func extractKernel(ukiData []byte) []byte {
 		panic("failed to parse UKI as PE file")
 	}
 	defer f.Close()
-	data, err := f.Section(".linux").Data()
+	sec := f.Section(".linux")
+	data, err := sec.Data()
 	if err != nil {
 		panic("failed to extract .linux section from UKI")
 	}
-	return data
+	return data[:sec.VirtualSize]
 }
 
 // measureTdxEfiVariable measures an EFI variable event.
