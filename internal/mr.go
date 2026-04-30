@@ -249,7 +249,7 @@ func MeasureRTMR1And2(kernelData []byte, initrdData []byte, kernelCmdline string
 	rtmr1Log := [][]byte{
 		measureSha384([]byte("Calling EFI Application from Boot Option")),
 		measureSha384([]byte{0x00, 0x00, 0x00, 0x00}), // Separator.
-		calculateUEFIDiskGUIDHash(),
+		calculateUEFIDiskGUIDHash(len(kernelData)),
 		ukiAuthHash.Hash(crypto.SHA384),
 		kernelAuthHash.Hash(crypto.SHA384),
 		measureSha384([]byte("Exit Boot Services Invocation")),
