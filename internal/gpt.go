@@ -12,6 +12,10 @@ const (
 	mib           = 1024 * 1024
 	gib           = 1024 * mib
 	partitionName = "esp"
+
+	// systemd-repart floors vfat ESPs on 4K sectors to 260 MiB (ESP_MIN_SIZE_4K
+	// in repart.c; FAT32 needs >= 65525 clusters), overriding SizeMin/MaxBytes=.
+	espMinSize4K = 260 * mib
 )
 
 // LBA (Logical Block Address) constants
@@ -32,6 +36,9 @@ const (
 func calculateUEFIDiskGUIDHash(efiSize int) []byte {
 	// Compute partition geometry to match systemd-repart + sgdisk behavior
 	espBytes := int(math.Ceil(float64(efiSize+32*mib)/4096)) * 4096 // repart rounds SizeMaxBytes up to 4096
+	if espBytes < espMinSize4K {
+		espBytes = espMinSize4K
+	}
 	diskBytes := int(math.Ceil(float64(espBytes+mib)/float64(gib))) * gib
 	diskSizeSectors := uint64(diskBytes / 512)
 	espEndingLBA := uint64(espStartingLBA + espBytes/512 - 1)
