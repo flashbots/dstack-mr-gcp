@@ -12,9 +12,7 @@ const (
 	mib           = 1024 * 1024
 	gib           = 1024 * mib
 	partitionName = "esp"
-
-	// systemd-repart floors vfat ESPs on 4K sectors to 260 MiB (ESP_MIN_SIZE_4K
-	// in repart.c; FAT32 needs >= 65525 clusters), overriding SizeMin/MaxBytes=.
+	// minimum size for vfat ESP partition in systemd-repart
 	espMinSize4K = 260 * mib
 )
 
